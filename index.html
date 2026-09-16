@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0f766e" />
+<title>Loja</title>
+<meta name="description" content="Catálogo de produtos com carrinho e encomenda por WhatsApp." />
+
+<style>
+  /* =======================================================
+     TEMA — muda só estas variáveis para adaptar a outra marca
+     ======================================================= */
+  :root{
+    --primary:#0f766e;
+    --primary-2:#14b8a6;
+    --bg:#f4f6f8;
+    --surface:#ffffff;
+    --surface-2:#eef1f4;
+    --text:#0f172a;
+    --muted:#64748b;
+    --border:#e2e8f0;
+    --danger:#dc2626;
+    --shadow:0 2px 8px rgba(15,23,42,.06);
+    --radius:14px;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.45;-webkit-font-smoothing:antialiased;
+  }
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer;border:0;background:transparent}
+  a{color:var(--primary)}
+  .hidden{display:none!important}
+
+  header.app-header{
+    position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);
+    padding:14px 16px;display:flex;align-items:center;gap:12px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;flex:1}
+  .brand img{height:32px;width:auto;display:block}
+  .brand .name{font-weight:700;font-size:1.1rem}
+  .icon-btn{width:42px;height:42px;border-radius:10px;display:grid;place-items:center;font-size:1.2rem;position:relative}
+  .icon-btn:active{background:var(--surface-2)}
+  .cart-badge{
+    position:absolute;top:2px;right:2px;background:var(--danger);color:#fff;font-size:.65rem;
+    min-width:16px;height:16px;border-radius:999px;display:grid;place-items:center;padding:0 3px;font-weight:700;
+  }
+
+  main{max-width:1100px;margin:0 auto;padding:16px}
+
+  .search-wrap{margin-bottom:16px}
+  .search-wrap input{
+    width:100%;padding:13px 16px;border-radius:12px;border:1px solid var(--border);
+    background:var(--surface);font-size:1rem;
+  }
+
+  .cats{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;margin-bottom:6px;scrollbar-width:none}
+  .cats::-webkit-scrollbar{display:none}
+  .cat-pill{
+    white-space:nowrap;padding:9px 16px;border-radius:999px;border:1px solid var(--border);
+    background:var(--surface);font-size:.88rem;font-weight:600;color:var(--muted);
+  }
+  .cat-pill.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+  @media(min-width:640px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media(min-width:900px){.grid{grid-template-columns:repeat(4,1fr)}}
+
+  .product{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow);
+  }
+  .product .thumb{aspect-ratio:1/1;background:var(--surface-2);overflow:hidden}
+  .product .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .product .info{padding:12px;display:flex;flex-direction:column;gap:6px;flex:1}
+  .product .name{font-weight:600;font-size:.92rem;line-height:1.3}
+  .product .cat{font-size:.75rem;color:var(--muted)}
+  .product .price{font-weight:700;color:var(--primary);font-size:1.05rem;margin-top:auto}
+  .product .add-btn{
+    margin-top:8px;padding:10px;border-radius:10px;background:var(--primary);color:#fff;
+    font-weight:600;font-size:.85rem;text-align:center;
+  }
+  .product .add-btn:active{background:var(--primary-2)}
+  .empty-state{text-align:center;color:var(--muted);padding:60px 20px}
+
+  /* ============ CARRINHO (drawer) ============ */
+  .overlay{
+    position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:40;
+    opacity:0;pointer-events:none;transition:opacity .2s ease;
+  }
+  .overlay.open{opacity:1;pointer-events:auto}
+  .cart-drawer{
+    position:fixed;top:0;right:0;bottom:0;width:100%;max-width:420px;background:var(--surface);
+    z-index:41;transform:translateX(100%);transition:transform .25s ease;
+    display:flex;flex-direction:column;
+  }
+  .cart-drawer.open{transform:translateX(0)}
+  .cart-head{
+    padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;
+  }
+  .cart-head h2{font-size:1.1rem}
+  .cart-items{flex:1;overflow-y:auto;padding:12px 16px}
+  .cart-item{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)}
+  .cart-item img{width:56px;height:56px;border-radius:8px;object-fit:cover;background:var(--surface-2)}
+  .cart-item .ci-info{flex:1;display:flex;flex-direction:column;gap:4px}
+  .cart-item .ci-name{font-size:.88rem;font-weight:600}
+  .cart-item .ci-price{font-size:.8rem;color:var(--muted)}
+  .qty-ctrl{display:flex;align-items:center;gap:8px}
+  .qty-ctrl button{
+    width:26px;height:26px;border-radius:7px;background:var(--surface-2);font-weight:700;
+  }
+  .ci-remove{color:var(--danger);font-size:.78rem;text-decoration:underline;align-self:flex-start}
+  .cart-foot{padding:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px}
+  .cart-foot .row{display:flex;justify-content:space-between;font-size:.92rem;color:var(--muted)}
+  .cart-foot .row.total{font-size:1.15rem;font-weight:700;color:var(--text)}
+  .field label{font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px}
+  .field select,.field input{
+    width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);
+  }
+  .btn-checkout{
+    padding:14px;border-radius:12px;background:var(--primary);color:#fff;font-weight:700;text-align:center;font-size:1rem;
+  }
+  .btn-checkout:disabled{opacity:.5}
+
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--text);color:var(--bg);
+    padding:10px 18px;border-radius:999px;font-size:.88rem;z-index:60;box-shadow:var(--shadow);
+    opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0b1220;--surface:#111a2e;--surface-2:#0f172a;--text:#e2e8f0;--muted:#94a3b8;--border:#1e293b;
+      --shadow:0 2px 10px rgba(0,0,0,.4);
+    }
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <span class="name" id="brand-name">Loja</span>
+  </div>
+  <button class="icon-btn" id="btn-open-cart" aria-label="Carrinho">
+    🛒<span class="cart-badge hidden" id="cart-count">0</span>
+  </button>
+</header>
+
+<main>
+  <div class="search-wrap">
+    <input id="search" type="search" placeholder="Pesquisar produto..." autocomplete="off" />
+  </div>
+
+  <div class="cats" id="cats"></div>
+
+  <div class="grid" id="grid"></div>
+  <p class="empty-state hidden" id="empty-state">Sem produtos para mostrar.</p>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<aside class="cart-drawer" id="cart-drawer">
+  <div class="cart-head">
+    <h2>O seu carrinho</h2>
+    <button class="icon-btn" id="btn-close-cart" aria-label="Fechar">✕</button>
+  </div>
+  <div class="cart-items" id="cart-items"></div>
+  <div class="cart-foot">
+    <div class="field" id="shipping-field">
+      <label for="shipping-select">Envio para</label>
+      <select id="shipping-select"></select>
+    </div>
+    <div class="row"><span>Subtotal</span><strong id="sum-subtotal">0,00 €</strong></div>
+    <div class="row"><span>Portes</span><strong id="sum-shipping">0,00 €</strong></div>
+    <div class="row total"><span>Total</span><strong id="sum-total">0,00 €</strong></div>
+    <button class="btn-checkout" id="btn-checkout" disabled>Encomendar por WhatsApp</button>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+   CONFIGURAÇÃO DA LOJA
+   Copia esta pasta para cada loja nova e edita só este bloco.
+   ========================================================================= */
+const STORE_CONFIG = {
+  name: "Nome da Loja",
+
+  // URL da Google Sheet publicada como CSV
+  // (Ficheiro → Partilhar → Publicar na Web → selecionar a folha → formato CSV)
+  sheetCsvUrl: "COLA_AQUI_O_LINK_CSV_DA_TUA_SHEET",
+
+  // Cores da marca (opcional — sobrepõe as do CSS acima)
+  colors: {
+    primary: "#0f766e",
+    primary2: "#14b8a6"
+  },
+
+  // Checkout: "whatsapp" já funciona; "vivawallet" fica pronto a ligar depois
+  checkoutMethod: "whatsapp",
+  whatsappNumber: "351900000000", // sem espaços, com indicativo do país, sem "+"
+
+  // Portes de envio por destino — ajusta conforme o teu caso
+  shipping: [
+    { id: "pt-continente", label: "Portugal Continental", cost: 4.5 },
+    { id: "pt-ilhas",       label: "Açores / Madeira",     cost: 7.5 },
+    { id: "es",             label: "Espanha",              cost: 8.0 },
+    { id: "eu",             label: "Resto da União Europeia", cost: 12.0 }
+  ]
+};
+
+/* =========================================================================
+   MOTOR — não precisas de editar daqui para baixo para trocar de loja
+   ========================================================================= */
+(() => {
+  document.getElementById("brand-name").textContent = STORE_CONFIG.name;
+  document.title = STORE_CONFIG.name;
+  document.documentElement.style.setProperty("--primary", STORE_CONFIG.colors.primary);
+  document.documentElement.style.setProperty("--primary-2", STORE_CONFIG.colors.primary2);
+
+  let PRODUCTS = [];
+  let activeCategory = "all";
+  let searchTerm = "";
+  const CART_KEY = "loja_cart_v1";
+
+  // ---------- CSV parsing (simples, com suporte a campos entre aspas) ----------
+  function parseCSV(text){
+    const rows = [];
+    let row = [], field = "", inQuotes = false;
+    for (let i = 0; i < text.length; i++){
+      const c = text[i], next = text[i+1];
+      if (inQuotes){
+        if (c === '"' && next === '"'){ field += '"'; i++; }
+        else if (c === '"'){ inQuotes = false; }
+        else field += c;
+      } else {
+        if (c === '"'){ inQuotes = true; }
+        else if (c === ','){ row.push(field); field = ""; }
+        else if (c === '\n' || c === '\r'){
+          if (field.length || row.length){ row.push(field); rows.push(row); row = []; field = ""; }
+          if (c === '\r' && next === '\n') i++;
+        } else field += c;
+      }
+    }
+    if (field.length || row.length){ row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function rowsToProducts(rows){
+    if (!rows.length) return [];
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const idx = name => header.indexOf(name);
+    const iId = idx("id"), iNome = idx("nome"), iCat = idx("categoria"),
+          iPreco = idx("preco"), iImg = idx("imagem"), iAtivo = idx("ativo"), iOrdem = idx("ordem");
+
+    return rows.slice(1)
+      .filter(r => r.length > 1)
+      .map(r => ({
+        id: (r[iId] || "").trim(),
+        nome: (r[iNome] || "").trim(),
+        categoria: (r[iCat] || "Geral").trim(),
+        preco: parseFloat((r[iPreco] || "0").replace(",", ".")) || 0,
+        imagem: (r[iImg] || "").trim(),
+        ativo: iAtivo === -1 ? true : /^(1|sim|true|verdadeiro)$/i.test((r[iAtivo] || "").trim()),
+        ordem: parseFloat(r[iOrdem]) || 0
+      }))
+      .filter(p => p.id && p.nome && p.ativo)
+      .sort((a,b) => a.ordem - b.ordem);
+  }
+
+  async function loadProducts(){
+    const grid = document.getElementById("grid");
+    grid.innerHTML = `<p class="empty-state">A carregar produtos...</p>`;
+    try {
+      const res = await fetch(STORE_CONFIG.sheetCsvUrl + (STORE_CONFIG.sheetCsvUrl.includes("?") ? "&" : "?") + "t=" + Date.now());
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      PRODUCTS = rowsToProducts(parseCSV(text));
+      renderCategories();
+      renderGrid();
+    } catch(e){
+      console.error(e);
+      grid.innerHTML = `<p class="empty-state">Não foi possível carregar os produtos. Verifica o link da Sheet em STORE_CONFIG.sheetCsvUrl.</p>`;
+    }
+  }
+
+  function eur(n){ return n.toFixed(2).replace(".", ",") + " €"; }
+
+  function renderCategories(){
+    const cats = ["all", ...new Set(PRODUCTS.map(p => p.categoria))];
+    const wrap = document.getElementById("cats");
+    wrap.innerHTML = "";
+    cats.forEach(c => {
+      const btn = document.createElement("button");
+      btn.className = "cat-pill" + (c === activeCategory ? " active" : "");
+      btn.textContent = c === "all" ? "Todos" : c;
+      btn.addEventListener("click", () => { activeCategory = c; renderCategories(); renderGrid(); });
+      wrap.appendChild(btn);
+    });
+  }
+
+  function filteredProducts(){
+    return PRODUCTS.filter(p => {
+      const matchCat = activeCategory === "all" || p.categoria === activeCategory;
+      const matchSearch = !searchTerm || p.nome.toLowerCase().includes(searchTerm);
+      return matchCat && matchSearch;
+    });
+  }
+
+  function renderGrid(){
+    const grid = document.getElementById("grid");
+    const empty = document.getElementById("empty-state");
+    const list = filteredProducts();
+    grid.innerHTML = "";
+    empty.classList.toggle("hidden", list.length > 0);
+    list.forEach(p => {
+      const card = document.createElement("div");
+      card.className = "product";
+      card.innerHTML = `
+        <div class="thumb">${p.imagem ? `<img src="${p.imagem}" alt="${escapeHtml(p.nome)}" loading="lazy">` : ""}</div>
+        <div class="info">
+          <span class="cat">${escapeHtml(p.categoria)}</span>
+          <span class="name">${escapeHtml(p.nome)}</span>
+          <span class="price">${eur(p.preco)}</span>
+          <button class="add-btn" data-id="${p.id}">Adicionar</button>
+        </div>
+      `;
+      card.querySelector(".add-btn").addEventListener("click", () => addToCart(p.id));
+      grid.appendChild(card);
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+  }
+
+  // ---------- CARRINHO ----------
+  function getCart(){
+    try { return JSON.parse(localStorage.getItem(CART_KEY)) || {}; }
+    catch(e){ return {}; }
+  }
+  function setCart(cart){
+    try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch(e){}
+    renderCart();
+  }
+  function addToCart(id){
+    const cart = getCart();
+    cart[id] = (cart[id] || 0) + 1;
+    setCart(cart);
+    showToast("Adicionado ao carrinho");
+  }
+  function updateQty(id, delta){
+    const cart = getCart();
+    cart[id] = (cart[id] || 0) + delta;
+    if (cart[id] <= 0) delete cart[id];
+    setCart(cart);
+  }
+  function removeFromCart(id){
+    const cart = getCart();
+    delete cart[id];
+    setCart(cart);
+  }
+
+  function renderCart(){
+    const cart = getCart();
+    const ids = Object.keys(cart);
+    const wrap = document.getElementById("cart-items");
+    const countEl = document.getElementById("cart-count");
+    const totalItems = ids.reduce((s,id) => s + cart[id], 0);
+    countEl.textContent = totalItems;
+    countEl.classList.toggle("hidden", totalItems === 0);
+
+    wrap.innerHTML = "";
+    if (!ids.length){
+      wrap.innerHTML = `<p class="empty-state">O carrinho está vazio.</p>`;
+    }
+    let subtotal = 0;
+    ids.forEach(id => {
+      const p = PRODUCTS.find(x => x.id === id);
+      if (!p) return;
+      const qty = cart[id];
+      subtotal += p.preco * qty;
+      const row = document.createElement("div");
+      row.className = "cart-item";
+      row.innerHTML = `
+        ${p.imagem ? `<img src="${p.imagem}" alt="">` : ""}
+        <div class="ci-info">
+          <span class="ci-name">${escapeHtml(p.nome)}</span>
+          <span class="ci-price">${eur(p.preco)}</span>
+          <div class="qty-ctrl">
+            <button data-dec="${id}">−</button>
+            <span>${qty}</span>
+            <button data-inc="${id}">+</button>
+          </div>
+        </div>
+        <button class="ci-remove" data-rm="${id}">remover</button>
+      `;
+      wrap.appendChild(row);
+    });
+    wrap.querySelectorAll("[data-inc]").forEach(b => b.addEventListener("click", () => updateQty(b.dataset.inc, 1)));
+    wrap.querySelectorAll("[data-dec]").forEach(b => b.addEventListener("click", () => updateQty(b.dataset.dec, -1)));
+    wrap.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => removeFromCart(b.dataset.rm)));
+
+    const shippingId = document.getElementById("shipping-select").value;
+    const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId) || STORE_CONFIG.shipping[0];
+    const shippingCost = ids.length ? (shippingOpt ? shippingOpt.cost : 0) : 0;
+
+    document.getElementById("sum-subtotal").textContent = eur(subtotal);
+    document.getElementById("sum-shipping").textContent = eur(shippingCost);
+    document.getElementById("sum-total").textContent = eur(subtotal + shippingCost);
+    document.getElementById("btn-checkout").disabled = ids.length === 0;
+  }
+
+  function renderShippingOptions(){
+    const sel = document.getElementById("shipping-select");
+    sel.innerHTML = "";
+    STORE_CONFIG.shipping.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.label} (${eur(s.cost)})`;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", renderCart);
+  }
+
+  // ---------- CHECKOUT ----------
+  function checkout(){
+    const cart = getCart();
+    const ids = Object.keys(cart);
+    if (!ids.length) return;
+
+    if (STORE_CONFIG.checkoutMethod === "whatsapp"){
+      const shippingId = document.getElementById("shipping-select").value;
+      const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId);
+      let msg = `Olá! Gostaria de encomendar:\n\n`;
+      let subtotal = 0;
+      ids.forEach(id => {
+        const p = PRODUCTS.find(x => x.id === id);
+        if (!p) return;
+        const qty = cart[id];
+        subtotal += p.preco * qty;
+        msg += `• ${p.nome} x${qty} — ${eur(p.preco * qty)}\n`;
+      });
+      msg += `\nSubtotal: ${eur(subtotal)}`;
+      if (shippingOpt) msg += `\nPortes (${shippingOpt.label}): ${eur(shippingOpt.cost)}`;
+      msg += `\nTotal: ${eur(subtotal + (shippingOpt ? shippingOpt.cost : 0))}`;
+      const url = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent(msg)}`;
+      window.open(url, "_blank");
+    } else if (STORE_CONFIG.checkoutMethod === "vivawallet"){
+      // Ponto de extensão: chamar aqui a Smart Checkout API da VivaWallet
+      // (criar order via backend/edge function e redirecionar para o checkout link)
+      alert("Checkout VivaWallet ainda não está ligado. Fala com o teu programador para ativar.");
+    }
+  }
+
+  // ---------- UI: drawer, toast, pesquisa ----------
+  function openCart(){
+    document.getElementById("cart-drawer").classList.add("open");
+    document.getElementById("overlay").classList.add("open");
+  }
+  function closeCart(){
+    document.getElementById("cart-drawer").classList.remove("open");
+    document.getElementById("overlay").classList.remove("open");
+  }
+  function showToast(msg){
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  document.getElementById("btn-open-cart").addEventListener("click", openCart);
+  document.getElementById("btn-close-cart").addEventListener("click", closeCart);
+  document.getElementById("overlay").addEventListener("click", closeCart);
+  document.getElementById("btn-checkout").addEventListener("click", checkout);
+  document.getElementById("search").addEventListener("input", (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    renderGrid();
+  });
+
+  renderShippingOptions();
+  renderCart();
+  loadProducts();
+})();
+</script>
+</body>
+</html>
