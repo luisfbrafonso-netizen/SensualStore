@@ -177,7 +177,7 @@
     <div class="row"><span>Subtotal</span><strong id="sum-subtotal">0,00 €</strong></div>
     <div class="row"><span>Portes</span><strong id="sum-shipping">0,00 €</strong></div>
     <div class="row total"><span>Total</span><strong id="sum-total">0,00 €</strong></div>
-    <button class="btn-checkout" id="btn-checkout" disabled>Encomendar por App</button>
+    <button class="btn-checkout" id="btn-checkout" disabled>Encomendar</button>
   </div>
 </aside>
 
@@ -201,9 +201,14 @@ const STORE_CONFIG = {
     primary2: "#14b8a6"
   },
 
-  // Checkout: "app" já funciona; "vivawallet" fica pronto a ligar depois
+  // Checkout: "whatsapp" (manual) ou "vivawallet" (pagamento real com cartão/MB WAY)
   checkoutMethod: "vivawallet",
   whatsappNumber: "351900000000", // sem espaços, com indicativo do país, sem "+"
+
+  // Só necessário se checkoutMethod = "vivawallet"
+  // URL base das tuas Edge Functions do Supabase, ex:
+  // "https://xxxxxxxx.supabase.co/functions/v1"
+  supabaseFunctionsUrl: "https://rcymbjhhbkesyknrumym.supabase.co/functions/v1",
 
   // Portes de envio por destino — ajusta conforme o teu caso
   shipping: [
@@ -452,9 +457,55 @@ const STORE_CONFIG = {
       const url = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent(msg)}`;
       window.open(url, "_blank");
     } else if (STORE_CONFIG.checkoutMethod === "vivawallet"){
-      // Ponto de extensão: chamar aqui a Smart Checkout API da VivaWallet
-      // (criar order via backend/edge function e redirecionar para o checkout link)
-      alert("Checkout VivaWallet ainda não está ligado. Fala com o teu programador para ativar.");
+      checkoutVivaWallet(cart, ids);
+    }
+  }
+
+  async function checkoutVivaWallet(cart, ids){
+    if (!STORE_CONFIG.supabaseFunctionsUrl){
+      alert("Falta configurar STORE_CONFIG.supabaseFunctionsUrl.");
+      return;
+    }
+    const btn = document.getElementById("btn-checkout");
+    btn.disabled = true;
+    btn.textContent = "A preparar pagamento...";
+
+    const shippingId = document.getElementById("shipping-select").value;
+    const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId);
+    let subtotal = 0;
+    const linhas = ids.map(id => {
+      const p = PRODUCTS.find(x => x.id === id);
+      const qty = cart[id];
+      subtotal += p.preco * qty;
+      return `${p.nome} x${qty}`;
+    });
+    const total = subtotal + (shippingOpt ? shippingOpt.cost : 0);
+
+    // guarda o resumo para a página de sucesso poder confirmar e notificar
+    try {
+      localStorage.setItem("loja_pending_order", JSON.stringify({
+        linhas, subtotal, shipping: shippingOpt ? shippingOpt.cost : 0, total,
+        shippingLabel: shippingOpt ? shippingOpt.label : ""
+      }));
+    } catch(e){}
+
+    try {
+      const res = await fetch(STORE_CONFIG.supabaseFunctionsUrl + "/create-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountEur: total,
+          description: `Encomenda ${STORE_CONFIG.name}`
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.checkoutUrl) throw new Error(data.error || "Falha ao criar checkout");
+      window.location.href = data.checkoutUrl;
+    } catch(e){
+      console.error(e);
+      alert("Não foi possível iniciar o pagamento. Tenta novamente.");
+      btn.disabled = false;
+      btn.textContent = "Encomendar";
     }
   }
 
@@ -483,6 +534,9 @@ const STORE_CONFIG = {
     searchTerm = e.target.value.trim().toLowerCase();
     renderGrid();
   });
+
+  document.getElementById("btn-checkout").textContent =
+    STORE_CONFIG.checkoutMethod === "vivawallet" ? "Pagar e encomendar" : "Encomendar por WhatsApp";
 
   renderShippingOptions();
   renderCart();
