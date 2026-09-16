@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0f766e" />
+<title>A confirmar pagamento...</title>
+<style>
+  :root{ --primary:#0f766e; --bg:#f4f6f8; --surface:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --danger:#dc2626; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:var(--surface);border-radius:16px;padding:32px 24px;max-width:420px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+  .icon{font-size:3rem;margin-bottom:12px}
+  h1{font-size:1.3rem;margin-bottom:8px}
+  p{color:var(--muted);font-size:.95rem;line-height:1.5}
+  .btn{display:inline-block;margin-top:20px;padding:13px 22px;border-radius:12px;background:var(--primary);color:#fff;
+       font-weight:700;text-decoration:none;font-size:.95rem}
+  .fail .icon{color:var(--danger)}
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#0b1220;--surface:#111a2e;--text:#e2e8f0;--muted:#94a3b8;--border:#1e293b}
+  }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="icon">⏳</div>
+    <h1>A confirmar o pagamento...</h1>
+    <p>Aguarda um momento, estamos a verificar a tua encomenda.</p>
+  </div>
+
+<script>
+  // Edita para bateres certo com o mesmo valor usado no index.html
+  const SUPABASE_FUNCTIONS_URL = "https://rcymbjhhbkesyknrumym.supabase.co/functions/v1";
+  const WHATSAPP_NUMBER = "351900000000"; // o teu número, para receberes o aviso da encomenda paga
+
+  const params = new URLSearchParams(window.location.search);
+  const transactionId = params.get("t");
+  const orderCode = params.get("s");
+  const card = document.getElementById("card");
+
+  function showFail(msg){
+    card.classList.add("fail");
+    card.innerHTML = `
+      <div class="icon">✕</div>
+      <h1>Não foi possível confirmar</h1>
+      <p>${msg || "Alguma coisa correu mal. Se o dinheiro foi debitado, contacta-nos a informar o número de referência " + (orderCode || "")}.</p>
+    `;
+  }
+
+  function showSuccess(){
+    let pending = null;
+    try { pending = JSON.parse(localStorage.getItem("loja_pending_order")); } catch(e){}
+
+    card.innerHTML = `
+      <div class="icon">✅</div>
+      <h1>Pagamento confirmado!</h1>
+      <p>A tua encomenda foi recebida. Entraremos em contacto em breve com os detalhes de envio.</p>
+    `;
+
+    if (pending){
+      let msg = `✅ NOVA ENCOMENDA PAGA (ref ${orderCode})\n\n`;
+      pending.linhas.forEach(l => msg += `• ${l}\n`);
+      msg += `\nSubtotal: ${pending.subtotal.toFixed(2).replace(".", ",")} €`;
+      msg += `\nPortes (${pending.shippingLabel}): ${pending.shipping.toFixed(2).replace(".", ",")} €`;
+      msg += `\nTotal: ${pending.total.toFixed(2).replace(".", ",")} €`;
+      msg += `\n\nPreciso da morada de entrega do cliente.`;
+      const waUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
+      const a = document.createElement("a");
+      a.href = waUrl; a.target = "_blank"; a.className = "btn";
+      a.textContent = "Confirmar morada por WhatsApp";
+      card.appendChild(a);
+    }
+
+    // limpa o carrinho e o pedido pendente
+    try {
+      localStorage.removeItem("loja_cart_v1");
+      localStorage.removeItem("loja_pending_order");
+    } catch(e){}
+  }
+
+  (async () => {
+    if (!transactionId){ showFail("Falta o identificador da transação no URL."); return; }
+    if (!SUPABASE_FUNCTIONS_URL){ showFail("Falta configurar SUPABASE_FUNCTIONS_URL neste ficheiro."); return; }
+
+    try {
+      const res = await fetch(SUPABASE_FUNCTIONS_URL + "/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transactionId })
+      });
+      const data = await res.json();
+      if (res.ok && data.paid) showSuccess();
+      else showFail("O pagamento não foi confirmado como concluído (estado: " + (data.statusId || "desconhecido") + ").");
+    } catch(e){
+      showFail("Erro de ligação ao confirmar o pagamento.");
+    }
+  })();
+</script>
+</body>
+</html>
