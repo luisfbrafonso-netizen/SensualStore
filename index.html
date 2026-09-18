@@ -1,552 +1,149 @@
-<!DOCTYPE html>
-<html lang="pt-PT">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="theme-color" content="#0f766e" />
-<title>Loja</title>
-<meta name="description" content="Catálogo de produtos com carrinho e encomenda por WhatsApp." />
+// Edge Function: create-checkout
+// Recebe o total do carrinho do frontend, cria uma "payment order" na Viva
+// (VivaWallet) e devolve o URL para onde redirecionar o cliente.
+//
+// Segredos necessários (definir em Supabase → Project Settings → Edge Functions → Secrets):
+//   VIVA_CLIENT_ID       — Client ID do Smart Checkout
+//   VIVA_CLIENT_SECRET   — Client Secret do Smart Checkout
+//   VIVA_SOURCE_CODE     — código da fonte de pagamento (Vendas → Fontes de Pagamento)
+//   VIVA_ENV             — "demo" ou "production" (usa "demo" até testares tudo)
+//   ALLOWED_ORIGIN        — o domínio da tua loja (ex: https://SEUUSER.github.io)
 
-<style>
-  /* =======================================================
-     TEMA — muda só estas variáveis para adaptar a outra marca
-     ======================================================= */
-  :root{
-    --primary:#0f766e;
-    --primary-2:#14b8a6;
-    --bg:#f4f6f8;
-    --surface:#ffffff;
-    --surface-2:#eef1f4;
-    --text:#0f172a;
-    --muted:#64748b;
-    --border:#e2e8f0;
-    --danger:#dc2626;
-    --shadow:0 2px 8px rgba(15,23,42,.06);
-    --radius:14px;
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+
+function corsHeaders(origin: string){
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, ms = 10000){
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
   }
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
-  body{
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-    background:var(--bg);color:var(--text);line-height:1.45;-webkit-font-smoothing:antialiased;
-  }
-  button,input,select,textarea{font:inherit;color:inherit}
-  button{cursor:pointer;border:0;background:transparent}
-  a{color:var(--primary)}
-  .hidden{display:none!important}
+}
 
-  header.app-header{
-    position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);
-    padding:14px 16px;display:flex;align-items:center;gap:12px;
-  }
-  .brand{display:flex;align-items:center;gap:10px;flex:1}
-  .brand img{height:32px;width:auto;display:block}
-  .brand .name{font-weight:700;font-size:1.1rem}
-  .icon-btn{width:42px;height:42px;border-radius:10px;display:grid;place-items:center;font-size:1.2rem;position:relative}
-  .icon-btn:active{background:var(--surface-2)}
-  .cart-badge{
-    position:absolute;top:2px;right:2px;background:var(--danger);color:#fff;font-size:.65rem;
-    min-width:16px;height:16px;border-radius:999px;display:grid;place-items:center;padding:0 3px;font-weight:700;
-  }
-
-  main{max-width:1100px;margin:0 auto;padding:16px}
-
-  .search-wrap{margin-bottom:16px}
-  .search-wrap input{
-    width:100%;padding:13px 16px;border-radius:12px;border:1px solid var(--border);
-    background:var(--surface);font-size:1rem;
-  }
-
-  .cats{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;margin-bottom:6px;scrollbar-width:none}
-  .cats::-webkit-scrollbar{display:none}
-  .cat-pill{
-    white-space:nowrap;padding:9px 16px;border-radius:999px;border:1px solid var(--border);
-    background:var(--surface);font-size:.88rem;font-weight:600;color:var(--muted);
-  }
-  .cat-pill.active{background:var(--primary);border-color:var(--primary);color:#fff}
-
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
-  @media(min-width:640px){.grid{grid-template-columns:repeat(3,1fr)}}
-  @media(min-width:900px){.grid{grid-template-columns:repeat(4,1fr)}}
-
-  .product{
-    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow);
-  }
-  .product .thumb{aspect-ratio:1/1;background:var(--surface-2);overflow:hidden}
-  .product .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-  .product .info{padding:12px;display:flex;flex-direction:column;gap:6px;flex:1}
-  .product .name{font-weight:600;font-size:.92rem;line-height:1.3}
-  .product .cat{font-size:.75rem;color:var(--muted)}
-  .product .price{font-weight:700;color:var(--primary);font-size:1.05rem;margin-top:auto}
-  .product .add-btn{
-    margin-top:8px;padding:10px;border-radius:10px;background:var(--primary);color:#fff;
-    font-weight:600;font-size:.85rem;text-align:center;
-  }
-  .product .add-btn:active{background:var(--primary-2)}
-  .empty-state{text-align:center;color:var(--muted);padding:60px 20px}
-
-  /* ============ CARRINHO (drawer) ============ */
-  .overlay{
-    position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:40;
-    opacity:0;pointer-events:none;transition:opacity .2s ease;
-  }
-  .overlay.open{opacity:1;pointer-events:auto}
-  .cart-drawer{
-    position:fixed;top:0;right:0;bottom:0;width:100%;max-width:420px;background:var(--surface);
-    z-index:41;transform:translateX(100%);transition:transform .25s ease;
-    display:flex;flex-direction:column;
-  }
-  .cart-drawer.open{transform:translateX(0)}
-  .cart-head{
-    padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;
-  }
-  .cart-head h2{font-size:1.1rem}
-  .cart-items{flex:1;overflow-y:auto;padding:12px 16px}
-  .cart-item{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)}
-  .cart-item img{width:56px;height:56px;border-radius:8px;object-fit:cover;background:var(--surface-2)}
-  .cart-item .ci-info{flex:1;display:flex;flex-direction:column;gap:4px}
-  .cart-item .ci-name{font-size:.88rem;font-weight:600}
-  .cart-item .ci-price{font-size:.8rem;color:var(--muted)}
-  .qty-ctrl{display:flex;align-items:center;gap:8px}
-  .qty-ctrl button{
-    width:26px;height:26px;border-radius:7px;background:var(--surface-2);font-weight:700;
-  }
-  .ci-remove{color:var(--danger);font-size:.78rem;text-decoration:underline;align-self:flex-start}
-  .cart-foot{padding:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px}
-  .cart-foot .row{display:flex;justify-content:space-between;font-size:.92rem;color:var(--muted)}
-  .cart-foot .row.total{font-size:1.15rem;font-weight:700;color:var(--text)}
-  .field label{font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px}
-  .field select,.field input{
-    width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);
-  }
-  .btn-checkout{
-    padding:14px;border-radius:12px;background:var(--primary);color:#fff;font-weight:700;text-align:center;font-size:1rem;
-  }
-  .btn-checkout:disabled{opacity:.5}
-
-  .toast{
-    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--text);color:var(--bg);
-    padding:10px 18px;border-radius:999px;font-size:.88rem;z-index:60;box-shadow:var(--shadow);
-    opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease;
-  }
-  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
-
-  @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#0b1220;--surface:#111a2e;--surface-2:#0f172a;--text:#e2e8f0;--muted:#94a3b8;--border:#1e293b;
-      --shadow:0 2px 10px rgba(0,0,0,.4);
-    }
-  }
-</style>
-</head>
-<body>
-
-<header class="app-header">
-  <div class="brand">
-    <span class="name" id="brand-name">Loja</span>
-  </div>
-  <button class="icon-btn" id="btn-open-cart" aria-label="Carrinho">
-    🛒<span class="cart-badge hidden" id="cart-count">0</span>
-  </button>
-</header>
-
-<main>
-  <div class="search-wrap">
-    <input id="search" type="search" placeholder="Pesquisar produto..." autocomplete="off" />
-  </div>
-
-  <div class="cats" id="cats"></div>
-
-  <div class="grid" id="grid"></div>
-  <p class="empty-state hidden" id="empty-state">Sem produtos para mostrar.</p>
-</main>
-
-<div class="overlay" id="overlay"></div>
-<aside class="cart-drawer" id="cart-drawer">
-  <div class="cart-head">
-    <h2>O seu carrinho</h2>
-    <button class="icon-btn" id="btn-close-cart" aria-label="Fechar">✕</button>
-  </div>
-  <div class="cart-items" id="cart-items"></div>
-  <div class="cart-foot">
-    <div class="field" id="shipping-field">
-      <label for="shipping-select">Envio para</label>
-      <select id="shipping-select"></select>
-    </div>
-    <div class="row"><span>Subtotal</span><strong id="sum-subtotal">0,00 €</strong></div>
-    <div class="row"><span>Portes</span><strong id="sum-shipping">0,00 €</strong></div>
-    <div class="row total"><span>Total</span><strong id="sum-total">0,00 €</strong></div>
-    <button class="btn-checkout" id="btn-checkout" disabled>Encomendar</button>
-  </div>
-</aside>
-
-<div class="toast" id="toast"></div>
-
-<script>
-/* =========================================================================
-   CONFIGURAÇÃO DA LOJA
-   Copia esta pasta para cada loja nova e edita só este bloco.
-   ========================================================================= */
-const STORE_CONFIG = {
-  name: "Nome da Loja",
-
-  // URL da Google Sheet publicada como CSV
-  // (Ficheiro → Partilhar → Publicar na Web → selecionar a folha → formato CSV)
-  sheetCsvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vT2MKY774_fhC8unXy-4EICyJjz_311wk-Lb6bZQZnGIZcOzMowvlvTM2_aiYcFls-EzBXnC_7R98mm/pub?gid=0&single=true&output=csv",
-
-  // Cores da marca (opcional — sobrepõe as do CSS acima)
-  colors: {
-    primary: "#0f766e",
-    primary2: "#14b8a6"
-  },
-
-  // Checkout: "whatsapp" (manual) ou "vivawallet" (pagamento real com cartão/MB WAY)
-  checkoutMethod: "vivawallet",
-  whatsappNumber: "351900000000", // sem espaços, com indicativo do país, sem "+"
-
-  // Só necessário se checkoutMethod = "vivawallet"
-  // URL base das tuas Edge Functions do Supabase, ex:
-  // "https://xxxxxxxx.supabase.co/functions/v1"
-  supabaseFunctionsUrl: "https://rcymbjhhbkesyknrumym.supabase.co/functions/v1",
-
-  // Portes de envio por destino — ajusta conforme o teu caso
-  shipping: [
-    { id: "pt-continente", label: "Portugal Continental", cost: 4.5 },
-    { id: "pt-ilhas",       label: "Açores / Madeira",     cost: 7.5 },
-    { id: "es",             label: "Espanha",              cost: 8.0 },
-    { id: "eu",             label: "Resto da União Europeia", cost: 12.0 }
-  ]
-};
-
-/* =========================================================================
-   MOTOR — não precisas de editar daqui para baixo para trocar de loja
-   ========================================================================= */
-(() => {
-  document.getElementById("brand-name").textContent = STORE_CONFIG.name;
-  document.title = STORE_CONFIG.name;
-  document.documentElement.style.setProperty("--primary", STORE_CONFIG.colors.primary);
-  document.documentElement.style.setProperty("--primary-2", STORE_CONFIG.colors.primary2);
-
-  let PRODUCTS = [];
-  let activeCategory = "all";
-  let searchTerm = "";
-  const CART_KEY = "loja_cart_v1";
-
-  // ---------- CSV parsing (simples, com suporte a campos entre aspas) ----------
-  function parseCSV(text){
-    const rows = [];
-    let row = [], field = "", inQuotes = false;
-    for (let i = 0; i < text.length; i++){
-      const c = text[i], next = text[i+1];
-      if (inQuotes){
-        if (c === '"' && next === '"'){ field += '"'; i++; }
-        else if (c === '"'){ inQuotes = false; }
-        else field += c;
-      } else {
-        if (c === '"'){ inQuotes = true; }
-        else if (c === ','){ row.push(field); field = ""; }
-        else if (c === '\n' || c === '\r'){
-          if (field.length || row.length){ row.push(field); rows.push(row); row = []; field = ""; }
-          if (c === '\r' && next === '\n') i++;
-        } else field += c;
-      }
-    }
-    if (field.length || row.length){ row.push(field); rows.push(row); }
-    return rows;
-  }
-
-  function rowsToProducts(rows){
-    if (!rows.length) return [];
-    const header = rows[0].map(h => h.trim().toLowerCase());
-    const idx = name => header.indexOf(name);
-    const iId = idx("id"), iNome = idx("nome"), iCat = idx("categoria"),
-          iPreco = idx("preco"), iImg = idx("imagem"), iAtivo = idx("ativo"), iOrdem = idx("ordem");
-
-    return rows.slice(1)
-      .filter(r => r.length > 1)
-      .map(r => ({
-        id: (r[iId] || "").trim(),
-        nome: (r[iNome] || "").trim(),
-        categoria: (r[iCat] || "Geral").trim(),
-        preco: parseFloat((r[iPreco] || "0").replace(",", ".")) || 0,
-        imagem: (r[iImg] || "").trim(),
-        ativo: iAtivo === -1 ? true : /^(1|sim|true|verdadeiro)$/i.test((r[iAtivo] || "").trim()),
-        ordem: parseFloat(r[iOrdem]) || 0
-      }))
-      .filter(p => p.id && p.nome && p.ativo)
-      .sort((a,b) => a.ordem - b.ordem);
-  }
-
-  async function loadProducts(){
-    const grid = document.getElementById("grid");
-    grid.innerHTML = `<p class="empty-state">A carregar produtos...</p>`;
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3){
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++){
     try {
-      const res = await fetch(STORE_CONFIG.sheetCsvUrl + (STORE_CONFIG.sheetCsvUrl.includes("?") ? "&" : "?") + "t=" + Date.now());
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const text = await res.text();
-      PRODUCTS = rowsToProducts(parseCSV(text));
-      renderCategories();
-      renderGrid();
-    } catch(e){
-      console.error(e);
-      grid.innerHTML = `<p class="empty-state">Não foi possível carregar os produtos. Verifica o link da Sheet em STORE_CONFIG.sheetCsvUrl.</p>`;
+      return await fetchWithTimeout(url, init);
+    } catch (e){
+      lastErr = e;
+      if (i < attempts - 1) await new Promise(r => setTimeout(r, 400 * (i + 1)));
     }
   }
+  throw lastErr;
+}
 
-  function eur(n){ return n.toFixed(2).replace(".", ",") + " €"; }
+serve(async (req) => {
+  const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "*";
+  const headers = corsHeaders(allowedOrigin);
 
-  function renderCategories(){
-    const cats = ["all", ...new Set(PRODUCTS.map(p => p.categoria))];
-    const wrap = document.getElementById("cats");
-    wrap.innerHTML = "";
-    cats.forEach(c => {
-      const btn = document.createElement("button");
-      btn.className = "cat-pill" + (c === activeCategory ? " active" : "");
-      btn.textContent = c === "all" ? "Todos" : c;
-      btn.addEventListener("click", () => { activeCategory = c; renderCategories(); renderGrid(); });
-      wrap.appendChild(btn);
-    });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers });
 
-  function filteredProducts(){
-    return PRODUCTS.filter(p => {
-      const matchCat = activeCategory === "all" || p.categoria === activeCategory;
-      const matchSearch = !searchTerm || p.nome.toLowerCase().includes(searchTerm);
-      return matchCat && matchSearch;
-    });
-  }
+  try {
+    const { amountEur, customerName, customerEmail, description } = await req.json();
 
-  function renderGrid(){
-    const grid = document.getElementById("grid");
-    const empty = document.getElementById("empty-state");
-    const list = filteredProducts();
-    grid.innerHTML = "";
-    empty.classList.toggle("hidden", list.length > 0);
-    list.forEach(p => {
-      const card = document.createElement("div");
-      card.className = "product";
-      card.innerHTML = `
-        <div class="thumb">${p.imagem ? `<img src="${p.imagem}" alt="${escapeHtml(p.nome)}" loading="lazy">` : ""}</div>
-        <div class="info">
-          <span class="cat">${escapeHtml(p.categoria)}</span>
-          <span class="name">${escapeHtml(p.nome)}</span>
-          <span class="price">${eur(p.preco)}</span>
-          <button class="add-btn" data-id="${p.id}">Adicionar</button>
-        </div>
-      `;
-      card.querySelector(".add-btn").addEventListener("click", () => addToCart(p.id));
-      grid.appendChild(card);
-    });
-  }
-
-  function escapeHtml(s){
-    return String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
-  }
-
-  // ---------- CARRINHO ----------
-  function getCart(){
-    try { return JSON.parse(localStorage.getItem(CART_KEY)) || {}; }
-    catch(e){ return {}; }
-  }
-  function setCart(cart){
-    try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch(e){}
-    renderCart();
-  }
-  function addToCart(id){
-    const cart = getCart();
-    cart[id] = (cart[id] || 0) + 1;
-    setCart(cart);
-    showToast("Adicionado ao carrinho");
-  }
-  function updateQty(id, delta){
-    const cart = getCart();
-    cart[id] = (cart[id] || 0) + delta;
-    if (cart[id] <= 0) delete cart[id];
-    setCart(cart);
-  }
-  function removeFromCart(id){
-    const cart = getCart();
-    delete cart[id];
-    setCart(cart);
-  }
-
-  function renderCart(){
-    const cart = getCart();
-    const ids = Object.keys(cart);
-    const wrap = document.getElementById("cart-items");
-    const countEl = document.getElementById("cart-count");
-    const totalItems = ids.reduce((s,id) => s + cart[id], 0);
-    countEl.textContent = totalItems;
-    countEl.classList.toggle("hidden", totalItems === 0);
-
-    wrap.innerHTML = "";
-    if (!ids.length){
-      wrap.innerHTML = `<p class="empty-state">O carrinho está vazio.</p>`;
+    if (!amountEur || amountEur <= 0){
+      return new Response(JSON.stringify({ error: "amountEur inválido" }), { status: 400, headers });
     }
-    let subtotal = 0;
-    ids.forEach(id => {
-      const p = PRODUCTS.find(x => x.id === id);
-      if (!p) return;
-      const qty = cart[id];
-      subtotal += p.preco * qty;
-      const row = document.createElement("div");
-      row.className = "cart-item";
-      row.innerHTML = `
-        ${p.imagem ? `<img src="${p.imagem}" alt="">` : ""}
-        <div class="ci-info">
-          <span class="ci-name">${escapeHtml(p.nome)}</span>
-          <span class="ci-price">${eur(p.preco)}</span>
-          <div class="qty-ctrl">
-            <button data-dec="${id}">−</button>
-            <span>${qty}</span>
-            <button data-inc="${id}">+</button>
-          </div>
-        </div>
-        <button class="ci-remove" data-rm="${id}">remover</button>
-      `;
-      wrap.appendChild(row);
-    });
-    wrap.querySelectorAll("[data-inc]").forEach(b => b.addEventListener("click", () => updateQty(b.dataset.inc, 1)));
-    wrap.querySelectorAll("[data-dec]").forEach(b => b.addEventListener("click", () => updateQty(b.dataset.dec, -1)));
-    wrap.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => removeFromCart(b.dataset.rm)));
 
-    const shippingId = document.getElementById("shipping-select").value;
-    const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId) || STORE_CONFIG.shipping[0];
-    const shippingCost = ids.length ? (shippingOpt ? shippingOpt.cost : 0) : 0;
+    const env = (Deno.env.get("VIVA_ENV") || "demo").toLowerCase();
+    const accountsHost = env === "production" ? "accounts.vivapayments.com" : "demo-accounts.vivapayments.com";
+    const apiHost = env === "production" ? "www.vivapayments.com" : "demo.vivapayments.com";
 
-    document.getElementById("sum-subtotal").textContent = eur(subtotal);
-    document.getElementById("sum-shipping").textContent = eur(shippingCost);
-    document.getElementById("sum-total").textContent = eur(subtotal + shippingCost);
-    document.getElementById("btn-checkout").disabled = ids.length === 0;
-  }
+    const clientId = (Deno.env.get("VIVA_CLIENT_ID") || "").trim();
+    const clientSecret = (Deno.env.get("VIVA_CLIENT_SECRET") || "").trim();
+    const sourceCode = (Deno.env.get("VIVA_SOURCE_CODE") || "").trim();
 
-  function renderShippingOptions(){
-    const sel = document.getElementById("shipping-select");
-    sel.innerHTML = "";
-    STORE_CONFIG.shipping.forEach(s => {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = `${s.label} (${eur(s.cost)})`;
-      sel.appendChild(opt);
-    });
-    sel.addEventListener("change", renderCart);
-  }
-
-  // ---------- CHECKOUT ----------
-  function checkout(){
-    const cart = getCart();
-    const ids = Object.keys(cart);
-    if (!ids.length) return;
-
-    if (STORE_CONFIG.checkoutMethod === "whatsapp"){
-      const shippingId = document.getElementById("shipping-select").value;
-      const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId);
-      let msg = `Olá! Gostaria de encomendar:\n\n`;
-      let subtotal = 0;
-      ids.forEach(id => {
-        const p = PRODUCTS.find(x => x.id === id);
-        if (!p) return;
-        const qty = cart[id];
-        subtotal += p.preco * qty;
-        msg += `• ${p.nome} x${qty} — ${eur(p.preco * qty)}\n`;
-      });
-      msg += `\nSubtotal: ${eur(subtotal)}`;
-      if (shippingOpt) msg += `\nPortes (${shippingOpt.label}): ${eur(shippingOpt.cost)}`;
-      msg += `\nTotal: ${eur(subtotal + (shippingOpt ? shippingOpt.cost : 0))}`;
-      const url = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent(msg)}`;
-      window.open(url, "_blank");
-    } else if (STORE_CONFIG.checkoutMethod === "vivawallet"){
-      checkoutVivaWallet(cart, ids);
-    }
-  }
-
-  async function checkoutVivaWallet(cart, ids){
-    if (!STORE_CONFIG.supabaseFunctionsUrl){
-      alert("Falta configurar STORE_CONFIG.supabaseFunctionsUrl.");
-      return;
-    }
-    const btn = document.getElementById("btn-checkout");
-    btn.disabled = true;
-    btn.textContent = "A preparar pagamento...";
-
-    const shippingId = document.getElementById("shipping-select").value;
-    const shippingOpt = STORE_CONFIG.shipping.find(s => s.id === shippingId);
-    let subtotal = 0;
-    const linhas = ids.map(id => {
-      const p = PRODUCTS.find(x => x.id === id);
-      const qty = cart[id];
-      subtotal += p.preco * qty;
-      return `${p.nome} x${qty}`;
-    });
-    const total = subtotal + (shippingOpt ? shippingOpt.cost : 0);
-
-    // guarda o resumo para a página de sucesso poder confirmar e notificar
+    // 1. Obter access token OAuth2 (client_credentials)
+    const basic = btoa(`${clientId}:${clientSecret}`);
+    let tokenRes: Response;
     try {
-      localStorage.setItem("loja_pending_order", JSON.stringify({
-        linhas, subtotal, shipping: shippingOpt ? shippingOpt.cost : 0, total,
-        shippingLabel: shippingOpt ? shippingOpt.label : ""
-      }));
-    } catch(e){}
-
-    try {
-      const res = await fetch(STORE_CONFIG.supabaseFunctionsUrl + "/create-checkout", {
+      tokenRes = await fetchWithRetry(`https://${accountsHost}/connect/token`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amountEur: total,
-          description: `Encomenda ${STORE_CONFIG.name}`
-        })
+        headers: {
+          "Authorization": `Basic ${basic}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Accept": "application/json",
+          "User-Agent": "DonTaskoStore/1.0 (+Supabase Edge Function)",
+        },
+        body: "grant_type=client_credentials",
       });
-      const data = await res.json();
-      if (!res.ok || !data.checkoutUrl){
-        alert("ERRO DE PAGAMENTO (mostra isto ao programador):\n\n" + JSON.stringify(data, null, 2));
-        btn.disabled = false;
-        btn.textContent = "Encomendar";
-        return;
-      }
-      window.location.href = data.checkoutUrl;
-    } catch(e){
-      console.error(e);
-      alert("ERRO DE LIGAÇÃO (mostra isto ao programador):\n\n" + String(e));
-      btn.disabled = false;
-      btn.textContent = "Encomendar";
+    } catch (fetchErr){
+      return new Response(JSON.stringify({ error: "Falha de rede ao obter token OAuth2", detail: String(fetchErr) }), { status: 502, headers });
     }
-  }
+    if (!tokenRes.ok){
+      const t = await tokenRes.text();
+      return new Response(JSON.stringify({ error: "Falha a obter token OAuth2", detail: t }), { status: 502, headers });
+    }
+    const { access_token } = await tokenRes.json();
 
-  // ---------- UI: drawer, toast, pesquisa ----------
-  function openCart(){
-    document.getElementById("cart-drawer").classList.add("open");
-    document.getElementById("overlay").classList.add("open");
-  }
-  function closeCart(){
-    document.getElementById("cart-drawer").classList.remove("open");
-    document.getElementById("overlay").classList.remove("open");
-  }
-  function showToast(msg){
-    const t = document.getElementById("toast");
-    t.textContent = msg;
-    t.classList.add("show");
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => t.classList.remove("show"), 1800);
-  }
+    // 2. Criar a payment order
+    // Corpo minimizado: só inclui email/nome do cliente se existirem
+    // (evita enviar chaves com valor undefined) e cabeçalhos extra
+    // (User-Agent, Accept, Accept-Encoding: identity) para testar se o
+    // erro de rede é causado por um WAF/CDN da Viva a bloquear o
+    // "fingerprint" por omissão do cliente fetch do Deno.
+    const customerObj: Record<string, string> = { requestLang: "pt-PT" };
+    if (customerEmail) customerObj.email = customerEmail;
+    if (customerName) customerObj.fullName = customerName;
 
-  document.getElementById("btn-open-cart").addEventListener("click", openCart);
-  document.getElementById("btn-close-cart").addEventListener("click", closeCart);
-  document.getElementById("overlay").addEventListener("click", closeCart);
-  document.getElementById("btn-checkout").addEventListener("click", checkout);
-  document.getElementById("search").addEventListener("input", (e) => {
-    searchTerm = e.target.value.trim().toLowerCase();
-    renderGrid();
-  });
+    const orderBody = JSON.stringify({
+      amount: Math.round(amountEur * 100), // cêntimos
+      customerTrns: description || "Encomenda na loja",
+      customer: customerObj,
+      sourceCode,
+    });
 
-  document.getElementById("btn-checkout").textContent =
-    STORE_CONFIG.checkoutMethod === "vivawallet" ? "Pagar e encomendar" : "Encomendar por WhatsApp";
+    let orderRes: Response;
+    try {
+      orderRes = await fetchWithRetry(`https://${apiHost}/checkout/v2/orders`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${access_token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Accept-Encoding": "identity",
+          "User-Agent": "DonTaskoStore/1.0 (+Supabase Edge Function)",
+        },
+        body: orderBody,
+      }, 3);
+    } catch (fetchErr){
+      return new Response(JSON.stringify({
+        error: "Falha de rede ao criar a order (mesmo depois de 3 tentativas)",
+        detail: String(fetchErr),
+        debug_api_host: apiHost,
+        debug_order_body: orderBody,
+      }), { status: 502, headers });
+    }
+    if (!orderRes.ok){
+      const t = await orderRes.text();
+      return new Response(JSON.stringify({
+        error: "Falha a criar a order",
+        detail: t || "(resposta vazia da Viva)",
+        debug_status: orderRes.status,
+        debug_status_text: orderRes.statusText,
+        debug_headers: Object.fromEntries(orderRes.headers.entries()),
+        debug_order_body: orderBody,
+      }), { status: 502, headers });
+    }
+    const { orderCode } = await orderRes.json();
 
-  renderShippingOptions();
-  renderCart();
-  loadProducts();
-})();
-</script>
-</body>
-</html>
+    const checkoutUrl = `https://${apiHost}/web/checkout?ref=${orderCode}`;
+
+    return new Response(JSON.stringify({ checkoutUrl, orderCode }), {
+      headers: { ...headers, "Content-Type": "application/json" },
+    });
+
+  } catch (e){
+    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers });
+  }
+});
