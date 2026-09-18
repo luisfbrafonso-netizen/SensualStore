@@ -499,11 +499,16 @@ const STORE_CONFIG = {
         })
       });
       const data = await res.json();
-      if (!res.ok || !data.checkoutUrl) throw new Error(data.error || "Falha ao criar checkout");
+      if (!res.ok || !data.checkoutUrl){
+        alert("ERRO DE PAGAMENTO (mostra isto ao programador):\n\n" + JSON.stringify(data, null, 2));
+        btn.disabled = false;
+        btn.textContent = "Encomendar";
+        return;
+      }
       window.location.href = data.checkoutUrl;
     } catch(e){
       console.error(e);
-      alert("Não foi possível iniciar o pagamento. Tenta novamente.");
+      alert("ERRO DE LIGAÇÃO (mostra isto ao programador):\n\n" + String(e));
       btn.disabled = false;
       btn.textContent = "Encomendar";
     }
